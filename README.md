@@ -29,7 +29,6 @@ POFRacaGenero
 └───Scripts - R
 |   │   POF - Made Final.Rmd
 |   │   renv.lock
-|   └───renv
 ```
 Há um arquivo "POF.csv" 
 Na pasta `Dados` temos uma série de arquivos RDS contendo os microdados brutos da POF 2017-2018 e o Tradutor de Rendimentos.
@@ -40,4 +39,4 @@ Na pasta `Scripts - Python` temos os dois Jupyter Notebooks:
 </ul>
 Além deles, também temos os arquivos referentes ao ambiente virtual utilizado para desenvolver os scripts, assim, facilitando a manutenção de dependências. Caso queira saber mais sobre o uso do Pipfile para manutenção de dependências, leia este <a href="https://medium.com/@patrickporto/introdu%C3%A7%C3%A3o-ao-pipenv-49aa9685dfe4">artigo</a>. 
 
-Na pasta `Scripts - R` temos um RMarkdown que transforma os microdados em uma base única. Além disso, também temos os arquivos referentes ao REnviroment, que possui um papel semelhante ao do Pipfile supracitado. 
+Na pasta `Scripts - R` temos um RMarkdown que transforma os microdados em uma base única. Além disso, também temos os o arquivo refernte ao REnviroment, que possui um papel semelhante ao do Pipfile supracitado. Um bom guia para o uso do REnv está <a href="https://sites.google.com/nyu.edu/nyu-hpc/hpc-systems/greene/software/r-packages-with-renv?pli=1"> neste link</a>.
