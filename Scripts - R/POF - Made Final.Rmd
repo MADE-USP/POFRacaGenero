@@ -10,8 +10,8 @@ bibliography: basepofgenrac.bib
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE) 
 
 # Estabelecer diretório
-knitr::opts_knit$set(root.dir = "Insira o seu diretório base", 
-                     base.dir = "Insira o seu diretório base")
+knitr::opts_knit$set(root.dir = "C:/Users/joao.gomes_contasimp/Documents/MADE", 
+                     base.dir = "C:/Users/joao.gomes_contasimp/Documents/MADE")
 
 # Botao copiar codigo nos chunks
 
@@ -19,7 +19,7 @@ knitr::opts_knit$set(root.dir = "Insira o seu diretório base",
 
 # Introdução
 
-Esse tutorial apresenta como produzir a base de dados utilizada na Nota de Política Econômica nº **27** a partir das informações da Pesquisa de Orçamentos Familiares de 2017-2018. A metodologia empregada aqui segue os chamdos [*Tradutores de tabelas*](https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=microdados), disponíveis na documentação da pesquisa, para identificação de rendimentos e se baseia em @Gaiger2020 para a classificação dos tributos. Os primeiros são compostos por duas categorias, *monetários* e *não monetários*, sendo os *não monetários* aqueles bens e serviços recebidos via provisão pública, doações privadas, trocas, produção própria e retirada do negócio.[^1] O conjunto desses rendimentos compõem aquilo chamado pelo IBGE como *renda total*. A diferença na metodologia de consolidação entre esses rendimentos está no fato de que os *monetários* serão construídos para cada indivíduo e apenas depois repartidos entre os membros do núcleo familiar, chamado pelo IBGE por *unidade de consumo* (UC), nomenclatura que adotaremos daqui em diante; já os rendimentos *não monetários* serão agregados desde o início para toda a UC, sem a construção de informações desse tipo de rendimento para indivíduos. Os tributos também serão consolidados no nível da UC e depois per capitalizados.
+Esse tutorial apresenta como produzir a base de dados utilizada na Nota de Política Econômica nº **XX** a partir das informações da Pesquisa de Orçamentos Familiares de 2017-2018. A metodologia empregada aqui segue os chamdos [*Tradutores de tabelas*](https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=microdados), disponíveis na documentação da pesquisa, para identificação de rendimentos e se baseia em @Gaiger2020 para a classificação dos tributos. Os primeiros são compostos por duas categorias, *monetários* e *não monetários*, sendo os *não monetários* aqueles bens e serviços recebidos via provisão pública, doações privadas, trocas, produção própria e retirada do negócio.[^1] O conjunto desses rendimentos compõem aquilo chamado pelo IBGE como *renda total*. A diferença na metodologia de consolidação entre esses rendimentos está no fato de que os *monetários* serão construídos para cada indivíduo e apenas depois repartidos entre os membros do núcleo familiar, chamado pelo IBGE por *unidade de consumo* (UC), nomenclatura que adotaremos daqui em diante; já os rendimentos *não monetários* serão agregados desde o início para toda a UC, sem a construção de informações desse tipo de rendimento para indivíduos. Os tributos também serão consolidados no nível da UC e depois per capitalizados.
 
 [^1]: Ver o Dicionário de variáveis também disponível na [documentação](https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=microdados).
 
@@ -188,13 +188,7 @@ RENDIMENTO_TRABALHO <- readRDS("./Dados/RENDIMENTO_TRABALHO.rds")
 |    V8500_DEFLA    |        Valor do rendimento deflacionado         |
 :::
 
-Contudo, para que possamos reconstituir a `RENDA_TOTAL` reportada na POF, e usada como referência na Nota, faremos uso da tabela de *Tradutor de rendimentos*, também disponível no **Tradutor de tabelas**. Como o documento é um arquivo `.xlsx`, teremos de fazer uso do pacote `readxl`. Caso você não tenha ele instalado, basta rodar o código abaixo.
-
-```{r, eval=FALSE}
-install.packages("readxl")
-```
-
-E abrir o arquivo.
+Contudo, para que possamos reconstituir a `RENDA_TOTAL` reportada na POF, e usada como referência na Nota, faremos uso da tabela de *Tradutor de rendimentos*, também disponível no **Tradutor de tabelas**.
 
 ```{r}
 tradutor_renda <- readxl::read_excel("./Dados/Tradutor_Rendimento.xlsx")
@@ -914,8 +908,6 @@ base$RENDA_N_M_PC <- base$RENDA_N_M/base$N_Pessoas
 Agora vamos agregar a renda monetária de todos os informantes da UC, a fim de criarmos uma variável para a renda monetária per capita. Faremos isso em duas etapas, na primeira agregaremos o total de cada um dos rendimentos dentro da família, na sequência vamos somar todos esses rendimentos na variável `RENDA_MONET_UC` e fazer a junção com a nossa base.
 
 ```{r}
-# Identificar rendimentos monetarios
-# names(base[c(64:76)])
 
 # Gerar renda monetaria total por UC sem empregados domesticos e parentes
 RENDA_MONET_UC <- aggregate(base[!(base$V0306 %in% 18:19), c(65:77)],
@@ -1076,4 +1068,3 @@ b.  Faça a divisão da soma dos rendimentos da nossa base pela soma dos rendime
 
 **5)** Faça agora a comparação da `RENDA_TOTAL` com os componentes dela que temos (renda monetária, não monetária e variação patrimonial). Note que ela está na base `MORADOR` ainda somada para toda a UC, sendo necessário dividí-la pela nossa variável de número de pessoas na UC. Você consegue pensar uma forma de reduzir a diferença entre elas?
 
-### Referências
