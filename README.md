@@ -7,7 +7,7 @@ Este repositório está estruturado da seguinte forma:
 ```
 POFRacaGenero
 │   README.md   
-│   POF.csv
+│   POF.zip
 └───Dados
 │   │   ALUGUEL_ESTIMADO.rds
 │   │   CADERNETA_COLETIVA.rds
@@ -30,7 +30,7 @@ POFRacaGenero
 |   │   POF - Made Final.Rmd
 |   │   renv.lock
 ```
-Há um arquivo "POF.csv" 
+Há um arquivo "POF.zip", um arquivo compactado que contém o arquivo csv que utilizamos em nossas análises e que pode ser gerado a partir dos códigos nas pastas de scripts.
 Na pasta `Dados` temos uma série de arquivos RDS contendo os microdados brutos da POF 2017-2018 e o Tradutor de Rendimentos.
 Na pasta `Scripts - Python` temos os dois Jupyter Notebooks:
 <ul>
