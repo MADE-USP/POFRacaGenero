@@ -1,0 +1,1079 @@
+---
+title: "POF - Tributos diretos e transferências sob uma análise interseccional"
+author: "Made USP"
+date: "Novembro 2022"
+output: html_document
+bibliography: basepofgenrac.bib
+---
+
+```{r setup, echo = FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE) 
+
+# Estabelecer diretório
+knitr::opts_knit$set(root.dir = "Insira o seu diretório base", 
+                     base.dir = "Insira o seu diretório base")
+
+# Botao copiar codigo nos chunks
+
+```
+
+# Introdução
+
+Esse tutorial apresenta como produzir a base de dados utilizada na Nota de Política Econômica nº **27** a partir das informações da Pesquisa de Orçamentos Familiares de 2017-2018. A metodologia empregada aqui segue os chamdos [*Tradutores de tabelas*](https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=microdados), disponíveis na documentação da pesquisa, para identificação de rendimentos e se baseia em @Gaiger2020 para a classificação dos tributos. Os primeiros são compostos por duas categorias, *monetários* e *não monetários*, sendo os *não monetários* aqueles bens e serviços recebidos via provisão pública, doações privadas, trocas, produção própria e retirada do negócio.[^1] O conjunto desses rendimentos compõem aquilo chamado pelo IBGE como *renda total*. A diferença na metodologia de consolidação entre esses rendimentos está no fato de que os *monetários* serão construídos para cada indivíduo e apenas depois repartidos entre os membros do núcleo familiar, chamado pelo IBGE por *unidade de consumo* (UC), nomenclatura que adotaremos daqui em diante; já os rendimentos *não monetários* serão agregados desde o início para toda a UC, sem a construção de informações desse tipo de rendimento para indivíduos. Os tributos também serão consolidados no nível da UC e depois per capitalizados.
+
+[^1]: Ver o Dicionário de variáveis também disponível na [documentação](https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=microdados).
+
+A construção dessas variáveis utiliza de quase todos os questionários da POF. A descrição de quais elementos do orçamento familiar são mensurados por cada um dos questinários é feita no *Manual do agente de pesquisa*,[^2] nele é possível identificar qual *quadro de produtos* está associado com qual questionário. A descrição de cada um dos produtos, seu quadro e código são encontrados no *Cadastro de Produtos*, também parte da documentação da pesquisa. Apenas como um exemplo da maneira de se navegar entre os vários documentos, vamos pegar o `IMPOSTO PREDIAL E TERRITORIAL URBANO (IPTU)` no *Cadastro de Produtos*. Ele é indicado como quadro `10` com código `1000601`. Como podemos ver no *Manual do agente de pesquisa* esse quadro pertence ao questionário *Despesa coletiva*, que considera alguns gastos comuns do núcleo familiar, e considera *Aluguel, impostos e outras taxas do domicílio principal no Período de Referência de 12 Meses*. Por fim, para que você entenda os ajustes que faremos adiante nos códigos dos produtos, repare que logo abaixo do código `1000601` no *Cadastro de Produtos* temos outro código associado apenas a `IPTU`. Devido a essas pequenas variações de nomenclatura, utilizaremos ao longo desse tutorial os cinco primeiros dígitos dos códigos, retirando a parte voltada para diferenciações como essa.
+
+[^2]: Também disponível na [documentação](https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=microdados) da pesquisa.
+
+Feita essa primeira matrícula no material da pesquisa, vamos abrir nossas bases de dados. Todas elas estão disponíveis no [link](https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=microdados) dos *Dados*, enquanto o link *Programa de leitura* permite abrir os arquivos em formato `.fwf` (*fixed width format*) através do **R**. Repare que os arquivos `.rds`, que resultam do código fornecido pelo IBGE, devem estar no seu diretório de trabalho para que você possa acessá-los. Vamos começar abrindo a base `MORADOR` que nos indica cada uma das pessoas recenseadas pela POF e na sequência copiá-la para nossa base principal que trabalharemos ao longo do tutorial. A ideia de manter a base `MORADOR` independente é para que você possa retornar a ela para comparações caso desconfie que algo não tenha funcionado direito.
+
+```{r}
+MORADOR <- readRDS("./Dados/MORADOR.rds")
+
+base <- MORADOR
+```
+
+Voltaremos mais tarde para a base de moradores a fim de obter o número de integrantes de cada família. Porém, até lá, vamos seguir com os demais questionários para extrair as informações de cada um deles.
+
+# Despesa coletiva
+
+No questionário da **Despesa coletiva** vamos obter o pagamento de dois tipos de impostos, aqueles sobre bens imóveis, incluindo aqui (IPTU, ITR, etc.), além das Contribuições previdenciárias pagas para trabalhadores domésticos.
+
+```{r}
+DESPESA_COLETIVA <- readRDS("./Dados/DESPESA_COLETIVA.rds")
+```
+
+Abaixo temos uma descrição das variáveis desse questionário que vamos utilizar.
+
+::: center
+**Variáveis**
+:::
+
+::: {.center .centralizado}
+|      Código       |                     Variável                     |
+|:-----------------:|:------------------------------------------------:|
+|       V9001       |                Produto consumido                 |
+|       V1904       | Valor da despesa com INSS e outras contribuições |
+|    V8000_DEFLA    |           Valor do gasto deflacionado            |
+|       V9011       |    Nº de meses em que o produto foi adquirido    |
+| FATOR_ANUALIZACAO | Definido para as variáveis com a V9011 faltante  |
+:::
+
+Para cada um dos tributos e dos rendimentos vamos criar um objeto que armazene os códigos relacionados a eles, assim é possível modificar apenas essa parte da nossa rotina em eventuais mudanças dos produtos a serem considerados. No caso da `CONTRIBUICAO_PREVIDENCIARIA` criaremos uma lista pois será preciso incluirmos outros códigos para ela, não relacionados ao gasto da família, mas sim com as deduções das rendas do trabalho.
+
+```{r}
+# Códigos
+IMOVEL <- c(10006, 10011, 47006, 10007, 10007, 10007, 10012, 
+            47007, 10013, 47026, 10014, 10015, 10016, 12035) 
+
+CONTRIBUICAO_PREVIDENCIARIA <- list(CONT_PREV_EMP=c(19001,19002,19003,19004,19005,19006,19007,19008,
+19009,19010,19011,19012,19013,19014,19015,19016,19017,19999))
+```
+
+Como discutido acima, vamos adaptar cada um dos questionários para que a identificação feita pela `V9001` seja apenas através dos 5 primeiros dígitos.
+
+```{r}
+# Correção V9001
+DESPESA_COLETIVA$V9001 <- substr(DESPESA_COLETIVA$V9001,1,5)
+```
+
+Outra característica importante da pesquisa é que ela considera os gastos durante todo o ano, sendo necessário mensalizar cada um deles para fazer a comparação com a renda. Para isso, é preciso computar o total dispendido no ano, multiplicando o valor gasto `"V8000_DEFLA"`, pelo número de vezes em que ele foi realizado no ano (`V9011`) e pelo chamado `FATOR_ANUALIZACAO`. Esses dois fatores são complementares entre si, quando um deles possui informações relevantes sobre o gasto, o outro não. Para facilitar o processo de anualização começamos substituindo `V9011` por `1` toda vez que ela for `NA` (faltante).
+
+```{r}
+# Correção V9011
+DESPESA_COLETIVA$V9011[is.na(DESPESA_COLETIVA$V9011)] <- 1
+```
+
+Na sequência usamos o *funcional*[^3] `apply` sobre as duas variáveis que nos retornam os valores monetários dos gastos (`"V8000_DEFLA"` e `"V1904_DEFLA"`). Nesse *funcional* criamos uma função com argumento único `vetor` que fará a multiplicação desses dois vetores pelos fatores de anualização e dividirá por 12. Temos, dessa forma, o gasto mensal para cada uma dessas despesas.
+
+[^3]: *Funcionais* são, basicamente, funções que utilizam outras funções como argumento. Para uma explicação detalhada veja @Wickham2019.
+
+```{r}
+# Mensalizar despesa: valor anual dividido por 12
+DESPESA_COLETIVA[,c("V8000_DEFLA", "V1904_DEFLA")] <- apply(DESPESA_COLETIVA[,c("V8000_DEFLA", "V1904_DEFLA")],
+                                                                  2, 
+                                                                  function(vetor) (vetor * DESPESA_COLETIVA$V9011 * DESPESA_COLETIVA$FATOR_ANUALIZACAO)/12)
+```
+
+O procedimento acima e os passos a seguir se repetirão durante todo o processo, fazendo as adaptações necessárias para cada um dos questionários, aos poucos se tornará um pouco mais familiar. Agora é preciso criar um indicador capaz de identificar nas linhas da base com que estamos trabalhando os códigos dos produtos que buscamos. Como os tributos sobre a folha de pagamento são indicados por outras variávies que não a `"V8000_DEFLA"`, em alguns questionários criaremos uma lista na qual cada um dos elementos será formado por duas partes. Na primeira, chamada `codigo`, vamos identificar em quais linhas da variável `V9001` temos produtos listados nos grupos que desejamos, algo feito utilizando o comando `%in%`. Enquanto sua segunda parte (`variavel`) será responsável por indicar qual variável deve ser utilizada no cômputo de cada um desses grupos de gastos/rendimentos.
+
+Para além da identificação dos impostos, vamos também já computar os chamados rendimentos não monetários, aqueles cuja forma de aquisição descrita pela variável `V9002` registram: `7` - Doação, `8` - Retirada do negócio, `9` - Troca, `10` - Produção própria e `11` - Outra. A metodologia para construção dessa parcela da renda também é descrita nos [*Tradutores de tabelas*](https://www.ibge.gov.br/estatisticas/sociais/saude/24786-pesquisa-de-orcamentos-familiares-2.html?=&t=microdados).
+
+```{r}
+# Índices
+i_coletiva <- list(IMOVEL = list(codigo = DESPESA_COLETIVA$V9001 %in% IMOVEL, 
+                                 variavel = "V8000_DEFLA"),
+                   CONT_PREV_EMP = list(codigo = DESPESA_COLETIVA$V9001 %in% CONTRIBUICAO_PREVIDENCIARIA$CONT_PREV_EMP,
+                                         variavel = "V1904_DEFLA"),
+                   N_MONET_1 = list(codigo = DESPESA_COLETIVA$V9002 %in% 7:11, 
+                                    variavel = "V8000_DEFLA"))
+```
+
+Por fim, nosso método de agregação para cada família será utilizando a função `aggregate`, outro *funcional* que nos permite produzir tabelas resumo a partir de um critério de agregação das linhas dado pelo argumento `by =`. Para realizar a agregação nós faremos um ciclo sobre `i_coletiva`, no qual o elemento `indice` será composto pelas duas partes da lista descrita acima (`codigo` e `variavel`) na mesma ordem que os criamos. Dessa forma, `indice[[1]]` será uma sequência de valores lógicos indicando quais linhas devem ser agregadas, enquanto `indice[[2]]` mostrará qual variável deve ser utilizada para computarmos aquele tributo/rendimento. Com esses dois critérios poderemos agregar para cada uma das UC qual a *soma* dos gastos que desejamos analisar utilizando a função `sum` no argumento `FUN =`. Para que a função não perca informações caso alguma família apresente informações faltantes vamos indicar para que a função `sum` remova esses casos (`na.rm = T`).
+
+A junção da nossa base com as novas informações será feita através da função `merge`, responsável por atribuir as agregações feitas pela função `aggregate` a cada uma das UC. Para isso, devemos indicar quais bases de dados (`x =` e `y =`) desejamos juntar e qual o critério de conexão entre elas (`by.x =` e `by.y =`). O último argumento da função (`all.x = T`) indica para o **R** que desejamos manter todas as observações de `x`, ainda que essa linha não tenha encontrado uma correspondência em `y`.
+
+```{r, warning=FALSE}
+# Compilação dos dados
+for(indice in i_coletiva) {
+  
+  base <- merge(x = base,
+                y = aggregate(DESPESA_COLETIVA[indice[[1]], indice[[2]]],
+                              by = list(COD_UPA = DESPESA_COLETIVA$COD_UPA[indice[[1]]],
+                                      NUM_DOM = DESPESA_COLETIVA$NUM_DOM[indice[[1]]],
+                                      NUM_UC = DESPESA_COLETIVA$NUM_UC[indice[[1]]]),
+                              FUN = sum, 
+                              na.rm = T),
+                by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+                by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+                all.x = T)
+  
+}
+```
+
+A última etapa para cada um dos questionários, que vamos reproduzir adiante, será nomear as variáveis adicionadas à nossa `base`. Para isso vamos sempre utilizar uma regra para que o tamanho da nossa lista de *indices* (nesse caso o `i_coletiva`) sirva como referência sobre quantas variáveis estamos criando e qual o nome de cada uma delas.
+
+```{r}
+# Nomear variáveis
+names(base)[(length(base)-(length(i_coletiva)-1)):length(base)] <- names(i_coletiva)
+```
+
+Agora vamos acrescentar a informação sobre o tipo de contratação de serviços domésticos da família (se mensalista, diarista e etc.), fornecida pela variável `V1905` (com o nome *espécie em que o serviço doméstico foi contratado pela UC*) desse mesmo questionário. Para isso, em primeiro lugar vamos retirar todas as respostas *Sem declaração*, alterando o valor `9` para `NA`. Na sequência vamos criar um vetor lógico para identificar os gastos com trabalhadoras domésticas chamado por `quadro19`. Por fim, a agregação será feita por domicílio, de modo a estabelecer um novo valor possível para a variável `V1905`, imputando a ela o valor `2` para os casos em que a UC conte com mais de uma trabalhadora doméstica. 
+
+```{r}
+# Alterar classificações
+DESPESA_COLETIVA$V1905[DESPESA_COLETIVA$V1905 == 9] <- NA
+
+# Vetor índice
+quadro19 <- substr(DESPESA_COLETIVA$V9001, 1, 2) == 19
+
+# Compilar dados
+base <- merge(base,
+              aggregate(DESPESA_COLETIVA[quadro19, "V1905"],
+                              by = list(COD_UPA = DESPESA_COLETIVA$COD_UPA[quadro19],
+                                      NUM_DOM = DESPESA_COLETIVA$NUM_DOM[quadro19],
+                                      NUM_UC = DESPESA_COLETIVA$NUM_UC[quadro19]),
+                         FUN = function(elemento) if(length(elemento) > 1) elemento <- 2 else elemento),
+              all.x = TRUE)
+
+# Nomear variável
+names(base)[length(base)] <- "ContrEmpDom"
+```
+
+
+# Rendimentos do trabalho
+
+No questinário de **Rendimentos do trabalho** vamos extrair uma série de informações distintas. Isso porque para além de começarmos a compor o rendimento das famílias, também vamos computar deduções com previdência, imposto de renda e outros descontos.
+
+```{r}
+RENDIMENTO_TRABALHO <- readRDS("./Dados/RENDIMENTO_TRABALHO.rds")
+```
+
+::: center
+**Variáveis**
+:::
+
+::: {.center .centralizado}
+|      Código       |                    Variável                     |
+|:-----------------:|:-----------------------------------------------:|
+|       V9001       |               Tipo de rendimento                |
+|   V531112_DEFLA   |  Dedução com previdência pública deflacionada   |
+|   V531122_DEFLA   |    Dedução com imposto de renda deflacionada    |
+|   V531132_DEFLA   | Dedução com ISS e outros impostos deflacionada  |
+|       V9010       |            Ultimo mes do rendimento             |
+|       V9011       |  Nº de meses em que o rendimento foi recebido   |
+| FATOR_ANUALIZACAO | Definido para as variáveis com a V9011 faltante |
+|    V8500_DEFLA    |        Valor do rendimento deflacionado         |
+:::
+
+Contudo, para que possamos reconstituir a `RENDA_TOTAL` reportada na POF, e usada como referência na Nota, faremos uso da tabela de *Tradutor de rendimentos*, também disponível no **Tradutor de tabelas**. Como o documento é um arquivo `.xlsx`, teremos de fazer uso do pacote `readxl`. Caso você não tenha ele instalado, basta rodar o código abaixo.
+
+```{r, eval=FALSE}
+install.packages("readxl")
+```
+
+E abrir o arquivo.
+
+```{r}
+tradutor_renda <- readxl::read_excel("./Dados/Tradutor_Rendimento.xlsx")
+```
+
+Como é possível notar, a coluna `Descricao_2` apresenta seis categorias distintas de rendimentos: `"Rendimento do Trabalho"`, `"Transferência"`, `"Rendimento de aluguel"`, `"Outras rendas"` e `"Rendimento Não Monetário"`, para além de uma informação faltante que se refere ao rendimento de variação patrimonial, que veremos mais adiante como construir. Dessas todas, apenas parte da primeira é obtida no questionário de `Rendimento do trabalho`. Para que não tenhamos problemas na identificação dos códigos, vamos excluir a linha referente à variação patrimonial.
+
+```{r}
+tradutor_renda <- tradutor_renda[-nrow(tradutor_renda),]
+```
+
+Dentre os códigos descritos para os rendimentos do trabalho estão alguns que classificaremos em outras categorias, como vale-alimentação (código `54016`), contudo, os únicos códigos incluídos na base *Rendimento do trabalho* são aqueles referentes ao quadro 53 (*Trabablho, rendimentos e deduções no período de referência de 12 meses no trabalho principal ou outro trabalho*). Portanto, quando fizermos a busca da variável `V9001` nos códigos descritos no objeto `TRABALHO` abaixo, não estaremos computando esses outros rendimentos
+
+```{r}
+TRABALHO <- substr(tradutor_renda$Codigo[tradutor_renda$Descricao_2 == "Rendimento do Trabalho"], 1, 5)
+```
+
+Na sequência vamos descrever os códigos de todas as deduções consideradas pela POF (previdência `"V531112_DEFLA"`, imposto de renda `"V531122_DEFLA"` e outras deduções como ISS `"V531132_DEFLA"`) e depois retomamos os mesmos passos feitos acima.
+
+```{r}
+# Códigos
+DEDUCOES <- list(IRPF_TRA = c(53001,53002,53003,53004,53005,53006,48031),
+                 DEDUCOES_TRABALHO=c(53001,53002,53003,53004,53005,53006),
+                 DEDUCOES_NAO_TRABALHO=c(54001,54002,54003,54004,54005,54006,54007,54008,54009,54010,54011,54012,54013,54014,54015,54016,54017,54018,54019,54020,54021,54022,54023,54024,54025,54026,54027,54028,54029,54030,54031,54032,54033,54034,54035,55001,55002,55003,55004,55005,55006,55007,55008,55009,55010,55011,55012,55013,55014,55015,55016,55017,55018,55019,55020,55021,55022,55023,55024,55025,55026,55027,55028,55029,55030,55031,55032,55033,55034,55035,55036,55037,55038,55039,55040,55041,55042,55043,55044,55045,55046,55047,55048,55049,55050,55051,55052,55053,55054,55055,55056,55057,55058,55059,55060,55061,55062,55063,55064,55065,55066,55067))
+
+CONTRIBUICAO_PREVIDENCIARIA <- append(CONTRIBUICAO_PREVIDENCIARIA, list(c(53001,53002,53003,53004,53005,53006)))
+
+# Nomear lista de codigos
+names(CONTRIBUICAO_PREVIDENCIARIA)[length(CONTRIBUICAO_PREVIDENCIARIA)] <- "CONT_PREV_TRABALHO"
+```
+
+```{r}
+# Correção V9001
+RENDIMENTO_TRABALHO$V9001 <- substr(RENDIMENTO_TRABALHO$V9001,1,5)
+```
+
+```{r}
+# Correção V9011
+RENDIMENTO_TRABALHO$V9011[is.na(RENDIMENTO_TRABALHO$V9011)] <- 1
+```
+
+```{r}
+# Mensalizar despesa: valor anual dividido por 12
+RENDIMENTO_TRABALHO[,c("V531122_DEFLA", "V531112_DEFLA", "V531132_DEFLA", "V8500_DEFLA")] <- apply(RENDIMENTO_TRABALHO[,c("V531122_DEFLA", "V531112_DEFLA", "V531132_DEFLA", "V8500_DEFLA")],
+                                                                  2, 
+                                                                  function(vetor) (vetor * RENDIMENTO_TRABALHO$V9011 * RENDIMENTO_TRABALHO$FATOR_ANUALIZACAO)/12)
+```
+
+```{r}
+# Índices
+i_rend_trab <- list(IRPF_TRA = list(codigo = RENDIMENTO_TRABALHO$V9001 %in% DEDUCOES$IRPF_TRA, 
+                                 variavel = "V531122_DEFLA"),
+                    CONT_PREV_TRA = list(codigo = RENDIMENTO_TRABALHO$V9001 %in% CONTRIBUICAO_PREVIDENCIARIA$CONT_PREV_TRABALHO,
+                                         variavel = "V531112_DEFLA"),
+                    DEDUCOES_TRABALHO = list(codigo = RENDIMENTO_TRABALHO$V9001 %in% DEDUCOES$DEDUCOES_TRABALHO,
+                                             variavel = "V531132_DEFLA"))
+```
+
+```{r, warning=FALSE}
+# Compilação dos dados
+for(indice in i_rend_trab) {
+  
+  base <- merge(base,
+                aggregate(RENDIMENTO_TRABALHO[indice[[1]], indice[[2]]],
+                          by = list(COD_UPA = RENDIMENTO_TRABALHO$COD_UPA[indice[[1]]],
+                                    NUM_DOM = RENDIMENTO_TRABALHO$NUM_DOM[indice[[1]]],
+                                    NUM_UC = RENDIMENTO_TRABALHO$NUM_UC[indice[[1]]]),
+                          FUN = sum, 
+                          na.rm = T),
+                by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+                by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+                all.x = T)
+  
+}
+```
+
+```{r}
+# Nomear variáveis
+names(base)[(length(base)-(length(i_rend_trab)-1)):length(base)] <- names(i_rend_trab)
+```
+
+## Construção dos rendimentos - Trabalho
+
+Agora, ao invés de identificarmos os rendimentos monetários do trabalho para a UC, vamos identificar para cada um dos indivíduos, utilizando ainda a função `aggregate`, mas adicionando a variável `"COD_INFORMANTE"` na informação do agrupamento. Vamos atribuir o nome da variável como `"TRABALHO_1"` pois ainda teremos outro rendimento do trabalho mais adiante.
+
+```{r}
+# Compilação dos dados 
+base <- merge(base,
+                 aggregate(RENDIMENTO_TRABALHO$V8500_DEFLA[RENDIMENTO_TRABALHO$V9001 %in% TRABALHO],
+                           by = list(COD_UPA = RENDIMENTO_TRABALHO$COD_UPA[RENDIMENTO_TRABALHO$V9001 %in% TRABALHO],
+                                     NUM_DOM = RENDIMENTO_TRABALHO$NUM_DOM[RENDIMENTO_TRABALHO$V9001 %in% TRABALHO],
+                                     NUM_UC = RENDIMENTO_TRABALHO$NUM_UC[RENDIMENTO_TRABALHO$V9001 %in% TRABALHO],
+                                     COD_INFORMANTE = RENDIMENTO_TRABALHO$COD_INFORMANTE[RENDIMENTO_TRABALHO$V9001 %in% TRABALHO]),
+                           FUN = sum, 
+                           na.rm = T),
+                 by.x = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                 by.y = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                 all.x = T)
+
+# Nomear variavel
+names(base)[length(base)] <- "TRABALHO_1"
+```
+
+
+# Outros rendimentos
+
+No questionário de *Outros rendimentos* faremos duas etapas. A primeira consiste nos passos que já temos feito, enquanto a segunda será o cálculo de uma parte da chamada *variação patrimonial*, para a qual seguiremos as instruções dadas nos *Tradutores de tabelas* que discutimos acima.
+
+```{r}
+OUTROS_RENDIMENTOS <- readRDS("./Dados/OUTROS_RENDIMENTOS.rds")
+```
+
+::: center
+**Variáveis**
+:::
+
+::: {.center .centralizado}
+|      Código       |                    Variável                     |
+|:-----------------:|:-----------------------------------------------:|
+|       V9001       |               Tipo de rendimento                |
+|    V8500_DEFLA    |        Valor do rendimento deflacionado         |
+|    V8501_DEFLA    |          Valor da dedução deflacionado          |
+|       V9010       |            Ultimo mes do rendimento             |
+|       V9011       |  Nº de meses em que o rendimento foi recebido   |
+| FATOR_ANUALIZACAO | Definido para as variáveis com a V9011 faltante |
+:::
+
+Todos os códigos indicados a seguir são de transfêrencias governamentais, algumas do sistema de previdência, como as aposentadorias do Regime Geral da Previdência Social e do Regime Próprio de Previdência Social (exclusiva do funcionalismo público), outras de caráter assistencial, como o Programa Bolsa Família e o Benefício de Prestação Continuada.
+
+```{r}
+# Códigos
+RGPS <- c(54004,54005,55003,55004,55050)
+
+RPPS <- c(54006,54007,55005,55006)
+
+AUXILIO_PUBLICO <- c(54009,54024,54026,54027,54030,54034,55036,55045,55056,55062,55065,55066)
+
+AUXILIO_MISTO <- c(54016,54017,54020,54022,54023,54025,54032,54033,55047,55055)
+
+BOLSA_FAMILIA <- c(54001,54003,55018)
+
+BPC <- c(54002)
+
+BOLSA_ESTUDO <- c(54010)
+
+SEGURO_DESEMPREGO <- c(55017)
+```
+
+Para além dessas, vamos identificar outros rendimentos classificados como transferências através dos *Tradutores de rendimentos*, além dos rendimentos de aluguel e outras rendas. Para não fazermos dupla contagem de nenhuma das transferências vamos selecionar os códigos indicados no *tradutor de rendimentos* excluindo aquelas já identificadas, para as quais também nos baseamos em @Gaiger2020.
+
+```{r}
+# Códigos
+TRANSFERENCIAS <- setdiff(substr(tradutor_renda$Codigo[tradutor_renda$Descricao_2 == "Transferência"],1,5), 
+                          c(RGPS, RPPS, BPC, BOLSA_FAMILIA, BOLSA_ESTUDO, 
+                            SEGURO_DESEMPREGO, AUXILIO_MISTO, AUXILIO_PUBLICO))
+
+ALUGUEL <- substr(tradutor_renda$Codigo[tradutor_renda$Descricao_2 == "Rendimento de aluguel"], 1, 5)
+
+OUTRAS_RENDAS <- substr(tradutor_renda$Codigo[tradutor_renda$Descricao_2 == "Outras rendas"], 1, 5)
+```
+
+Nessa parte retornamos aos mesmos passos anteriores.
+
+```{r}
+# Correção V9001
+OUTROS_RENDIMENTOS$V9001 <- substr(OUTROS_RENDIMENTOS$V9001,1,5)
+```
+
+```{r}
+# Correção V9011
+OUTROS_RENDIMENTOS$V9011[is.na(OUTROS_RENDIMENTOS$V9011)] <- 1
+```
+
+```{r}
+# Mensalizar despesa: valor anual dividido por 12
+OUTROS_RENDIMENTOS[,c("V8500_DEFLA", "V8501_DEFLA")] <- apply(OUTROS_RENDIMENTOS[,c("V8500_DEFLA", "V8501_DEFLA")],
+                                                                  2, 
+                                                                  function(vetor) (vetor * OUTROS_RENDIMENTOS$V9011 * OUTROS_RENDIMENTOS$FATOR_ANUALIZACAO)/12)
+```
+
+Agora, como vamos trabalhar apenas com rendimentos, nossa lista dos índices será utilizada apenas na agregação por indivíduo e todos na mesma variável (`V8500_DEFLA`).
+
+```{r}
+# Índices
+i_out_rend <- list(RGPS_T = OUTROS_RENDIMENTOS$V9001 %in% RGPS,
+                   RPPS_T = OUTROS_RENDIMENTOS$V9001 %in% RPPS,
+                   AUXI_PUB_T = OUTROS_RENDIMENTOS$V9001 %in% AUXILIO_PUBLICO,
+                   AUX_MIS_T = OUTROS_RENDIMENTOS$V9001 %in% AUXILIO_MISTO,
+                   PBF_T = OUTROS_RENDIMENTOS$V9001 %in% BOLSA_FAMILIA,
+                   BPC_T = OUTROS_RENDIMENTOS$V9001 %in% BPC,
+                   BOL_EST_T = OUTROS_RENDIMENTOS$V9001 %in% BOLSA_ESTUDO,
+                   SEG_DES_T = OUTROS_RENDIMENTOS$V9001 %in% SEGURO_DESEMPREGO,
+                   ALUGUEL = OUTROS_RENDIMENTOS$V9001 %in% ALUGUEL,
+                   OUTRAS_RENDAS = OUTROS_RENDIMENTOS$V9001 %in% OUTRAS_RENDAS,
+                   TRABALHO_2 = OUTROS_RENDIMENTOS$V9001 %in% setdiff(TRABALHO,c(AUXILIO_MISTO, AUXILIO_PUBLICO)), 
+                   OUTRAS_TRANSFERENCIAS_T = OUTROS_RENDIMENTOS$V9001 %in% TRANSFERENCIAS)
+```
+
+```{r}
+# Compilação dos dados
+for(indice in i_out_rend) {
+  
+  base <- suppressWarnings(merge(base,
+                                    aggregate(OUTROS_RENDIMENTOS$V8500_DEFLA[indice],
+                                              by = list(COD_UPA = OUTROS_RENDIMENTOS$COD_UPA[indice],
+                                                        NUM_DOM = OUTROS_RENDIMENTOS$NUM_DOM[indice],
+                                                        NUM_UC = OUTROS_RENDIMENTOS$NUM_UC[indice],
+                                                        COD_INFORMANTE = OUTROS_RENDIMENTOS$COD_INFORMANTE[indice]),
+                                              FUN = sum,
+                                              na.rm = T),
+                                    by.x = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                                    by.y = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                                    all.x = T))
+  
+}
+```
+
+```{r}
+# Nomear variáveis
+names(base)[(length(base)-(length(i_out_rend)-1)):length(base)] <- names(i_out_rend)
+```
+
+Agora será preciso computarmos as *Deduções não trabalho* conforme indicadas em @Gaiger2020. Para elas faremos a agregação no nível da UC, como temos feito com os tributos.
+
+```{r}
+# Índice
+DEDUCOES_N_T = OUTROS_RENDIMENTOS$V9001 %in% DEDUCOES$DEDUCOES_NAO_TRABALHO
+```
+
+```{r}
+# Compilação dos dados
+base <- suppressWarnings(merge(base,
+                               aggregate(OUTROS_RENDIMENTOS$V8501_DEFLA[DEDUCOES_N_T],
+                                         by = list(COD_UPA = OUTROS_RENDIMENTOS$COD_UPA[DEDUCOES_N_T],
+                                                   NUM_DOM = OUTROS_RENDIMENTOS$NUM_DOM[DEDUCOES_N_T],
+                                                   NUM_UC = OUTROS_RENDIMENTOS$NUM_UC[DEDUCOES_N_T],
+                                                   COD_INFORMANTE = OUTROS_RENDIMENTOS$COD_INFORMANTE[DEDUCOES_N_T]),
+                                         FUN = sum,
+                                         na.rm = T),
+                               by.x = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                               by.y = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                               all.x = T))
+
+# Nomear variáveis
+names(base)[length(base)] <- "DEDUCOES_N_T"
+```
+
+## Variação patrimonial
+
+Para a construção dessa variável não seguiremos exatamente o procedimento descrito pelo *Tradutor de tabelas*. Ao invés de computarmos a primeira parte da variável para a UC, faremos por indivíduo, dado que assim temos um ajuste final melhor da variável com as informações divulgadas pelo IBGE.
+
+```{r}
+# Códigos 
+VP1 <- c(55008, 55010, 55016, 55020:55026, 55035, 55037, 55044, 55053, 55061)
+```
+
+```{r, warning=FALSE}
+# Compilação dos dados
+base <- merge(base,
+                aggregate(OUTROS_RENDIMENTOS$V8500_DEFLA[OUTROS_RENDIMENTOS$V9001 %in% VP1],
+                            by = list(COD_UPA = OUTROS_RENDIMENTOS$COD_UPA[OUTROS_RENDIMENTOS$V9001 %in% VP1],
+                                    NUM_DOM = OUTROS_RENDIMENTOS$NUM_DOM[OUTROS_RENDIMENTOS$V9001 %in% VP1],
+                                    NUM_UC = OUTROS_RENDIMENTOS$NUM_UC[OUTROS_RENDIMENTOS$V9001 %in% VP1],
+                                    COD_INFORMANTE= OUTROS_RENDIMENTOS$COD_INFORMANTE[OUTROS_RENDIMENTOS$V9001 %in% VP1]),
+                            FUN = sum,
+                            na.rm = T),
+                by.x = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                by.y = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                all.x = T)
+```
+
+```{r}
+names(base)[length(base)] <- "VP1"
+```
+
+Agora faremos o cálculo das diferenças indicadas na parte 2 da construção da variação patrimonial, seguindo as operações explicadas no *tradutor de tabelas*.
+
+```{r}
+# Codigos
+VP2 <- c(57001, 56001, 57002, 56002, 57003, 56003, 57004, 56004)
+```
+
+```{r}
+# Compilação dos dados
+for (produto in VP2) {
+  
+  base <- suppressWarnings(merge(base,
+                  aggregate(OUTROS_RENDIMENTOS$V8500_DEFLA[OUTROS_RENDIMENTOS$V9001 == produto],
+                            by = list(COD_UPA = OUTROS_RENDIMENTOS$COD_UPA[OUTROS_RENDIMENTOS$V9001 == produto],
+                                      NUM_DOM = OUTROS_RENDIMENTOS$NUM_DOM[OUTROS_RENDIMENTOS$V9001 == produto],
+                                      NUM_UC = OUTROS_RENDIMENTOS$NUM_UC[OUTROS_RENDIMENTOS$V9001 == produto],
+                                      COD_INFORMANTE = OUTROS_RENDIMENTOS$COD_INFORMANTE[OUTROS_RENDIMENTOS$V9001 == produto]),
+                            FUN = sum,
+                            na.rm = T),
+                by.x = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                by.y = c("COD_UPA","NUM_DOM","NUM_UC", "COD_INFORMANTE"),
+                all.x = T)) 
+  
+  names(base)[length(base)] <- produto
+  
+}
+```
+
+```{r}
+# Obter diferencas conforme explicado no tradutor
+base[is.na(base)] <- 0
+base$VP.1 <- base$`57001`- base$`56001`
+base$VP.1[base$VP.1 < 0] <- 0
+base$VP.2 <- base$`57002`- base$`56002`
+base$VP.2[base$VP.2 < 0] <- 0
+base$VP.3 <- base$`57003`- base$`56003`
+base$VP.3[base$VP.3 < 0] <- 0
+base$VP.4 <- base$`57004`- base$`56004`
+base$VP.4[base$VP.4 < 0] <- 0
+base$VP2 <- base$VP.1 + base$VP.2 + base$VP.3 + base$VP.4
+
+# Apagar etapas intermediárias do processo
+base <- base[-(80:91)]
+```
+
+Em seguida vamos agregar as informações de cada informante para a UC.
+
+```{r}
+# Valor final
+base$VP_INFOR <- base$VP1 + base$VP2
+
+# Agregar para a UC
+base <- merge(base,
+              aggregate(base$VP_INFOR,
+                     by = list(COD_UPA = base$COD_UPA,
+                               NUM_DOM = base$NUM_DOM,
+                               NUM_UC = base$NUM_UC),
+                     FUN = sum,
+                     na.rm = T),
+              by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+              by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+              all.x = T)
+
+# Nomear a variável
+names(base)[length(base)] <- "VP"
+```
+
+# Despesa individual
+
+Para esse questionário seguiremos os passos anteriores considerando pagamento de tributos e os rendimentos não monetários.
+
+```{r}
+DESPESA_INDIVIDUAL <- readRDS("./Dados/DESPESA_INDIVIDUAL.rds")
+```
+
+::: center
+**Variáveis**
+:::
+
+::: {.center .centralizado}
+|      Código       |                    Variável                     |
+|:-----------------:|:-----------------------------------------------:|
+|       V9001       |               Tipo de rendimento                |
+|       V9002       |               Forma de aquisição                |
+|    V8000_DEFLA    |           Valor deflacionado do gasto           |
+|       V9011       |   Nº de meses em que o produto foi adquirido    |
+| FATOR_ANUALIZACAO | Definido para as variáveis com a V9011 faltante |
+:::
+
+Notar que foi incluído `IRPF2` para cobrir o código `48031`, referente à complementação do IR e impostos referentes ao exercício anterior.
+
+```{r}
+# Códigos
+CONTRIBUICAO_PREVIDENCIARIA <- append(CONTRIBUICAO_PREVIDENCIARIA, list(c(48005,48037)))
+
+names(CONTRIBUICAO_PREVIDENCIARIA)[length(CONTRIBUICAO_PREVIDENCIARIA)] <- "CONT_PREV_INDIVIDUAL"
+
+IPVA <- c(50001,50002,50004,50005,50006,50007,50008,50014,50016,50017)
+
+OUTROS_DIRETOS <- c(48004,48010,48011)
+```
+
+```{r}
+# Correção V9001
+DESPESA_INDIVIDUAL$V9001 <- substr(DESPESA_INDIVIDUAL$V9001,1,5)
+```
+
+```{r}
+# Correção V9011
+DESPESA_INDIVIDUAL$V9011[is.na(DESPESA_INDIVIDUAL$V9011)] <- 1
+```
+
+```{r}
+# Mensalizar despesa: valor anual dividido por 12
+DESPESA_INDIVIDUAL$V8000_DEFLA <- (DESPESA_INDIVIDUAL$V8000_DEFLA * DESPESA_INDIVIDUAL$V9011 * DESPESA_INDIVIDUAL$FATOR_ANUALIZACAO)/12
+```
+
+```{r}
+# Índices
+i_individual <- list(CONT_PREV_INDIVIDUAL = DESPESA_INDIVIDUAL$V9001 %in% CONTRIBUICAO_PREVIDENCIARIA$CONT_PREV_INDIVIDUAL,
+                     IPVA = DESPESA_INDIVIDUAL$V9001 %in% IPVA,
+                     OUT_DIR = DESPESA_INDIVIDUAL$V9001 %in% OUTROS_DIRETOS,
+                     IRPF_IND = DESPESA_INDIVIDUAL$V9001 %in% DEDUCOES$IRPF_TRA,
+                     IMOVEL_OUTROS = DESPESA_INDIVIDUAL$V9001 %in% IMOVEL,
+                     N_MONET_2 = DESPESA_INDIVIDUAL$V9002 %in% 7:11)
+```
+
+```{r, warning=FALSE}
+# Compilação dos dados
+for(indice in i_individual) {
+  
+  base <- merge(base,
+                aggregate(DESPESA_INDIVIDUAL$V8000_DEFLA[indice],
+                          by = list(COD_UPA = DESPESA_INDIVIDUAL$COD_UPA[indice],
+                                    NUM_DOM = DESPESA_INDIVIDUAL$NUM_DOM[indice],
+                                    NUM_UC = DESPESA_INDIVIDUAL$NUM_UC[indice]),
+                          FUN = sum,
+                          na.rm = T),
+                by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+                by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+                all.x = T)
+  
+}
+```
+
+```{r}
+# Nomear variáveis
+names(base)[(length(base)-(length(i_individual)-1)):length(base)] <- names(i_individual)
+```
+
+# Caderneta coletiva
+
+No caso desse questinário, responsável exclusivamente pela mensuração dos gastos alimentares, vamos recuperar apenas informações da renda não monetária.
+
+```{r}
+CADERNETA_COLETIVA <- readRDS("./Dados/CADERNETA_COLETIVA.rds")
+```
+
+::: center
+**Variáveis**
+:::
+
+::: {.center .centralizado}
+|      Código       |                    Variável                     |
+|:-----------------:|:-----------------------------------------------:|
+|       V9001       |               Tipo de rendimento                |
+|       V9002       |               Forma de aquisição                |
+|    V8000_DEFLA    |               Valor da aquisição                |
+|       V9011       |   Nº de meses em que o produto foi adquirido    |
+| FATOR_ANUALIZACAO | Definido para as variáveis com a V9011 faltante |
+:::
+
+Nessa base não será preciso criarmos a lista dos gastos de interesse, faremos apenas os ajustes das variáveis e poderemos computar a soma desses recebimentos.
+
+```{r}
+# Correção V9001
+CADERNETA_COLETIVA$V9001 <- substr(CADERNETA_COLETIVA$V9001,1,5)
+```
+
+Como esse questionário utiliza apenas o `FATOR_ANUALIZACAO`, sem a variável `V9011`, então podemos passar direto para a mensalização do gasto.
+
+```{r}
+# Mensalizar despesa: valor anual dividido por 12
+CADERNETA_COLETIVA$V8000_DEFLA <- (CADERNETA_COLETIVA$V8000_DEFLA * CADERNETA_COLETIVA$FATOR_ANUALIZACAO)/12
+```
+
+Por fim, dado que essa será a única informação relevante desse questionário, faremos sua agregação apenas indicando a forma de aquição do bem, através da variável `V9002`.
+
+```{r}
+# Compilação dos dados
+base <- merge(base,
+                aggregate(CADERNETA_COLETIVA$V8000_DEFLA[CADERNETA_COLETIVA$V9002 %in% 7:11],
+                          by = list(COD_UPA = CADERNETA_COLETIVA$COD_UPA[CADERNETA_COLETIVA$V9002 %in% 7:11],
+                                    NUM_DOM = CADERNETA_COLETIVA$NUM_DOM[CADERNETA_COLETIVA$V9002 %in% 7:11],
+                                    NUM_UC = CADERNETA_COLETIVA$NUM_UC[CADERNETA_COLETIVA$V9002 %in% 7:11]),
+                          FUN = sum,
+                          na.rm = T),
+                by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+                by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+                all.x = T)
+```
+
+```{r}
+# Nomear variáveis
+names(base)[length(base)] <- "N_MONET_3"
+```
+
+# Aluguel estimado
+
+Esse questionário consiste na segunda parte do cálculo da renda não monetária conforme descrita no **Tradutor de rendimentos**. Ele é responsável por atribuir um valor de aluguel para as UC residentes em casa própria, ou sem que precisem arcar com o aluguel. Aqui é preciso identificarmos o total do *Alguel estimado* e subtrair os *serviços para domicílio* pagos em dinheiro pela UC.
+
+```{r}
+ALUGUEL_ESTIMADO <- readRDS("./Dados/ALUGUEL_ESTIMADO.rds")
+```
+
+::: center
+**Variáveis**
+:::
+
+::: {.center .centralizado}
+|      Código       |                    Variável                     |
+|:-----------------:|:-----------------------------------------------:|
+|    V8000_DEFLA    |           Valor deflacionado do gasto           |
+|       V9011       |   Nº de meses em que o produto foi adquirido    |
+| FATOR_ANUALIZACAO | Definido para as variáveis com a V9011 faltante |
+:::
+
+Nesse questionário, apesar das variáveis `V9001` e `V9002` estarem presentes, cada uma apresenta um único valor. A primeira indica o código de rendimento `000101` (aluguel estimado), enquanto a segunda indica que a forma de aquisição foi `11` - Outra. Assim, novamente o processo de agregação será mais simples, apenas necessitando realizar a soma para cada UC.
+
+```{r}
+# Correção V9001
+ALUGUEL_ESTIMADO$V9011[is.na(ALUGUEL_ESTIMADO$V9011)] <- 1
+```
+
+```{r}
+# Mensalizar despesa: valor anual dividido por 12
+ALUGUEL_ESTIMADO$V8000_DEFLA <- (ALUGUEL_ESTIMADO$V8000_DEFLA * ALUGUEL_ESTIMADO$V9011 * ALUGUEL_ESTIMADO$FATOR_ANUALIZACAO)/12
+```
+
+```{r}
+# Compilação dos dados
+base <- merge(base,
+                aggregate(ALUGUEL_ESTIMADO$V8000_DEFLA,
+                          by = list(COD_UPA = ALUGUEL_ESTIMADO$COD_UPA,
+                                    NUM_DOM = ALUGUEL_ESTIMADO$NUM_DOM,
+                                    NUM_UC = ALUGUEL_ESTIMADO$NUM_UC),
+                          FUN = sum,
+                          na.rm = T),
+                by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+                by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+                all.x = T)
+
+# Nomear variáveis
+names(base)[length(base)] <- "ALUGUEL_EST_1"
+```
+
+Na sequência será preciso retirar os gastos monetários do questionário de *Consumo coletivo* associados ao imóvel: *Quadro 8* - conservação, manutenção e pequenos reparos; *Quadro 10* - alugel, impostos e outras taxas; e *Quadro 12* - outros itens do domicílio. Teremos dois índices nesse caso, o primeiro para identificar esses gastos e o segundo para identificar quando a forma de aquisição envolveu gastos monetários.
+
+```{r}
+# Códigos
+i_ALUGUEL_EST_1 <- DESPESA_COLETIVA$V9001 %in% c(80010:80241,80260:80680,89990,10006,
+                                                 10011,12005:12008,12010:12015,12017:12020,
+                                                 12023:12025,12027:12036,12999)
+
+i_ALUGUEL_EST_2 <- DESPESA_COLETIVA$V9002 %in% 1:6
+```
+
+```{r}
+# Compilação dos dados
+base <- merge(base,
+              aggregate(DESPESA_COLETIVA$V8000_DEFLA[i_ALUGUEL_EST_1 & i_ALUGUEL_EST_2],
+                           by = list(COD_UPA = DESPESA_COLETIVA$COD_UPA[i_ALUGUEL_EST_1 & i_ALUGUEL_EST_2],
+                                     NUM_DOM = DESPESA_COLETIVA$NUM_DOM[i_ALUGUEL_EST_1 & i_ALUGUEL_EST_2],
+                                     NUM_UC = DESPESA_COLETIVA$NUM_UC[i_ALUGUEL_EST_1 & i_ALUGUEL_EST_2]),
+                           FUN = sum, 
+                           na.rm = T),
+                by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+                by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+                all.x = T)
+```
+
+```{r}
+# Nomear variáveis
+names(base)[length(base)] <- "ALUGUEL_EST_2"
+```
+
+Agora vamos consolidar as informações do aluguel estimado que agregamos acima.
+
+```{r}
+# Valor final - Aluguel estimado
+base[is.na(base)] <- 0
+base$ALUGUEL_EST <- base$ALUGUEL_EST_1 - base$ALUGUEL_EST_2
+base$ALUGUEL_EST[base$ALUGUEL_EST < 0] <- 0
+```
+
+# Serviços não monetários
+
+Os últimos questionários que vamos utilizar referem-se aos serviços não monetários, uma novidade da POF 2017-2018. Esses questionários destinam-se à compreensão do recebimento de serviços não monetários de educação e saúde. Faremos a agregação das informações de cada um dos questionários para composição da renda não monetária.
+
+## Serviços não monetários / POF 2
+
+```{r}
+SERVICO_NAO_MONETARIO_POF2 <- readRDS("./Dados/SERVICO_NAO_MONETARIO_POF2.rds")
+```
+
+```{r}
+# Correção V9011
+SERVICO_NAO_MONETARIO_POF2$V9011[is.na(SERVICO_NAO_MONETARIO_POF2$V9011)] <- 1
+```
+
+```{r}
+# Mensalizar despesa: valor anual dividido por 12
+SERVICO_NAO_MONETARIO_POF2$V8000_DEFLA <- (SERVICO_NAO_MONETARIO_POF2$V8000_DEFLA * SERVICO_NAO_MONETARIO_POF2$V9011 * SERVICO_NAO_MONETARIO_POF2$FATOR_ANUALIZACAO)/12
+```
+
+```{r}
+# Compilação dos dados
+base <- merge(base,
+              aggregate(SERVICO_NAO_MONETARIO_POF2$V8000_DEFLA,
+                        by = list(COD_UPA = SERVICO_NAO_MONETARIO_POF2$COD_UPA,
+                                     NUM_DOM = SERVICO_NAO_MONETARIO_POF2$NUM_DOM,
+                                     NUM_UC = SERVICO_NAO_MONETARIO_POF2$NUM_UC),
+                        FUN = sum, 
+                        na.rm = T),
+              by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+              by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+              all.x = T)
+```
+
+```{r}
+# Nomear variáveis
+names(base)[length(base)] <- "N_MONET_4"
+```
+
+## Serviços não monetários / POF 4
+
+```{r}
+SERVICO_NAO_MONETARIO_POF4 <- readRDS("./Dados/SERVICO_NAO_MONETARIO_POF4.rds")
+```
+
+```{r}
+# Correção V9011
+SERVICO_NAO_MONETARIO_POF4$V9011[is.na(SERVICO_NAO_MONETARIO_POF4$V9011)] <- 1
+```
+
+```{r}
+# Mensalizar despesa: valor anual dividido por 12
+SERVICO_NAO_MONETARIO_POF4$V8000_DEFLA <- (SERVICO_NAO_MONETARIO_POF4$V8000_DEFLA * SERVICO_NAO_MONETARIO_POF4$V9011 * SERVICO_NAO_MONETARIO_POF4$FATOR_ANUALIZACAO)/12
+```
+
+```{r}
+# Compilação dos dados
+base <- merge(base,
+              aggregate(SERVICO_NAO_MONETARIO_POF4$V8000_DEFLA,
+                           by = list(COD_UPA = SERVICO_NAO_MONETARIO_POF4$COD_UPA,
+                                     NUM_DOM = SERVICO_NAO_MONETARIO_POF4$NUM_DOM,
+                                     NUM_UC = SERVICO_NAO_MONETARIO_POF4$NUM_UC),
+                           FUN = sum, 
+                           na.rm = T),
+              by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+              by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+              all.x = T)
+```
+
+```{r}
+# Nomear variáveis
+names(base)[length(base)] <- "N_MONET_5"
+```
+
+# Ajustes finais
+
+### Durezas da pesquisa
+
+O primeiro dos ajustes finais é daqueles típicos dos problemas de pesquisa que só é possível descobrir fazendo. Trata-se do fato de uma das famílias aparecer com renda zero, mas uma cobrança de impostos sobre imóveis não nula, fazendo com que sua participação na amostra distorça os resultados.
+
+```{r}
+base$IMOVEL[base$COD_UPA == 330102475 & base$NUM_DOM == 8 & base$NUM_UC == 2] <- 0
+base$IMOVEL_OUTROS[base$COD_UPA == 330102475 & base$NUM_DOM == 8 & base$NUM_UC == 2] <- 0
+```
+
+### Composição da Unidade de Consumo
+
+Agora vamos obter número de integrantes de cada *Unidade de Consumo*. Repare que para isso utilizaremos o tamanho do vetor formado pela variável *código do informante* de cada *UC*. Antes, será preciso retirarmos da amostra os integrantes da UC que são empregados domésticos ou parentes de empregados domésticos, identificados pelos valores `18:19` pela variável `V0306`, que indica a `Condição na Unidade de Consumo`.
+
+```{r}
+base$COD_INFORMANTE[base$V0306 %in% 18:19] <- NA
+```
+
+```{r, warning=FALSE}
+# Compilação dos dados
+base <- merge(base,
+              aggregate(base$COD_INFORMANTE[!is.na(base$COD_INFORMANTE)],
+                        by = list(COD_UPA = base$COD_UPA[!is.na(base$COD_INFORMANTE)],
+                                    NUM_DOM = base$NUM_DOM[!is.na(base$COD_INFORMANTE)],
+                                    NUM_UC = base$NUM_UC[!is.na(base$COD_INFORMANTE)]),
+                          FUN = length),
+              by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+              by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+              all.x = T)
+              
+# Nomear variavel
+names(base)[length(base)] <- "N_Pessoas"
+```
+
+Agora vamos adicionar a soma do peso das observações de cada indivíduo que compõem as UC. Com isso teremos uma variável indicando quantas pessoas aquela unidade de consumo representa conjuntamente, excluindo novamente empregados domésticos e seus parentes
+
+```{r, warning=FALSE}
+# Compilação dos dados
+base <- merge(base,
+              aggregate(base$PESO_FINAL[!is.na(base$COD_INFORMANTE)],
+                        by = list(COD_UPA = base$COD_UPA[!is.na(base$COD_INFORMANTE)],
+                                    NUM_DOM = base$NUM_DOM[!is.na(base$COD_INFORMANTE)],
+                                    NUM_UC = base$NUM_UC[!is.na(base$COD_INFORMANTE)]),
+                        FUN = sum, 
+                        na.rm = T),
+              by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+              by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+              all.x = T)
+              
+# Nomear variavel
+names(base)[length(base)] <- "PESO_UC"
+```
+
+### Renda não monetária
+
+A partir do tamanho das famílias, vamos construir a renda não monetária per capita da família.
+
+```{r}
+# Ajuste para retirar NAs das variáveis de rendimentos não monetários
+base[is.na(base)] <- 0
+
+base$RENDA_N_M <- base$N_MONET_1 + base$N_MONET_2 + base$N_MONET_3 + 
+  base$ALUGUEL_EST + base$N_MONET_4 + base$N_MONET_5
+
+base$RENDA_N_M[base$V0306 %in% 18:19] <- 0
+
+base$RENDA_N_M_PC <- base$RENDA_N_M/base$N_Pessoas
+```
+
+### Renda monetária
+
+Agora vamos agregar a renda monetária de todos os informantes da UC, a fim de criarmos uma variável para a renda monetária per capita. Faremos isso em duas etapas, na primeira agregaremos o total de cada um dos rendimentos dentro da família, na sequência vamos somar todos esses rendimentos na variável `RENDA_MONET_UC` e fazer a junção com a nossa base.
+
+```{r}
+# Identificar rendimentos monetarios
+# names(base[c(64:76)])
+
+# Gerar renda monetaria total por UC sem empregados domesticos e parentes
+RENDA_MONET_UC <- aggregate(base[!(base$V0306 %in% 18:19), c(65:77)],
+                            by = list(COD_UPA = base$COD_UPA[!(base$V0306 %in% 18:19)],
+                                      NUM_DOM = base$NUM_DOM[!(base$V0306 %in% 18:19)],
+                                      NUM_UC = base$NUM_UC[!(base$V0306 %in% 18:19)]),
+                            FUN = sum, 
+                            na.rm = T)
+
+RENDA_MONET_UC$RENDA_MONET_UC <- rowSums(RENDA_MONET_UC[-(1:3)])
+
+# Acrescentar variável na base
+base <- merge(base,
+              RENDA_MONET_UC[c("COD_UPA","NUM_DOM","NUM_UC","RENDA_MONET_UC")],
+              by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+              by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+              all.x = T)
+                 
+
+# Ajuste para empregados domesticos e parentes de empregados domésticos
+base$RENDA_MONET_UC[base$V0306 %in% 18:19] <- 0
+
+# Per capitalizar
+base$RENDA_M_PC <- base$RENDA_MONET_UC/base$N_Pessoas
+```
+
+Na sequência faremos algo similar, mas ao invés de somarmos a renda de toda a UC, vamos considerar apenas a renda do informante.
+
+```{r}
+# Renda monetaria do informante 
+base$RENDA_M_INFOR <- rowSums(base[c(65:77)])
+```
+
+### Ajuste de variáveis
+
+Agora vamos unificar variáveis, para manter apenas as informações mais relevantes de cada uma delas.
+
+```{r}
+# Unificar renda do trabalho
+base$TRABALHO <- base$TRABALHO_1 + base$TRABALHO_2
+
+# Manter apenas uma informação sobre rendimento do trabalho
+base <- base[setdiff(names(base),c("TRABALHO_1", "TRABALHO_2"))]
+
+# Unificar IRPF do questionário de despesa individual e rendimentos do trabalho
+base$IRPF <- base$IRPF_TRA + base$IRPF_IND
+
+# Manter apenas uma informação sobre IRPF
+base <- base[setdiff(names(base),c("IRPF_TRA", "IRPF_IND"))]
+
+# Unificar contribuicoes previdenciarias do questionario de despesa individual e rendimento do trabalho (mantem separado para empregadas domésticas)
+base$CONTR_PREVI <- base$CONT_PREV_INDIVIDUAL + base$CONT_PREV_TRA 
+
+# Manter apenas uma informação sobre contribuição previdenciaria (mantem separado para empregadas domésticas)
+base <- base[setdiff(names(base),c("CONT_PREV_INDIVIDUAL", "CONT_PREV_TRA"))]
+
+# Unificar IMOVEL do questionario de despesa coletiva e despesa individual
+base$IMOVEL <- base$IMOVEL + base$IMOVEL_OUTROS
+
+# Manter apenas uma informação sobre impostos com bens imóveis
+base <- base[setdiff(names(base),c("IMOVEL_OUTROS"))]
+```
+
+```{r}
+## selecionar variáveis relevantes
+base <- base[c(1:59,61:74,78:80,85,88:length(base))]
+```
+
+### Per capitalizar tributos e rendimentos
+
+Na sequência dividimos todos os impostos e os rendimentos pelo número de moradores da casa e, por fim, anexamos todas as nossas informações na base de indivíduos. Repare que a per capitalização é feita dentro do ciclo, no qual selecionamos a coluna da variável desejada e dividimos pelo número de pessoas da UC.
+
+```{r}
+tributos <- c("CONT_PREV_EMP", 
+              "DEDUCOES_TRABALHO", 
+              "DEDUCOES_N_T", 
+              "CONTR_PREVI", 
+              "IPVA", 
+              "OUT_DIR", 
+              "IRPF", 
+              "IMOVEL")
+# Per capitalizar tributos
+for (t in tributos) {
+  
+  base$tributo.pc <- base[[t]]/base$N_Pessoas
+
+  names(base)[length(base)] <- paste0(t, "_PC")
+  
+}
+
+rendimentos <- c("RGPS_T",
+                 "RPPS_T",
+                 "AUXI_PUB_T",
+                 "AUX_MIS_T",
+                 "PBF_T",
+                 "BPC_T",
+                 "BOL_EST_T",
+                 "SEG_DES_T",
+                 "ALUGUEL",
+                 "OUTRAS_RENDAS",
+                 "OUTRAS_TRANSFERENCIAS_T",
+                 "TRABALHO",
+                 "VP")
+
+# Per capitalizar rendimentos
+for (r in rendimentos) {
+  
+  aux_rendimentos <- merge(base[c("COD_UPA","NUM_DOM","NUM_UC","N_Pessoas")],
+                                  aggregate(base[!(base$V0306 %in% 18:19), r],
+                                            by = list(COD_UPA = base$COD_UPA[!(base$V0306 %in% 18:19)],
+                                                      NUM_DOM = base$NUM_DOM[!(base$V0306 %in% 18:19)],
+                                                      NUM_UC = base$NUM_UC[!(base$V0306 %in% 18:19)]),
+                                            FUN = sum,
+                                            na.rm = T),
+                           by.x = c("COD_UPA","NUM_DOM","NUM_UC"),
+                           by.y = c("COD_UPA","NUM_DOM","NUM_UC"),
+                           all.x = T)
+  
+  base$rendimento.pc <- aux_rendimentos$x/aux_rendimentos$N_Pessoas
+  names(base)[length(base)] <- paste0(r, "_PC")
+  
+}
+```
+
+Por fim, para além de todas as informações já coletadas, também vamos coletar no questionário de Rendimentos do Trabalho as informações a respeito da chamada `posição na ocupação`, ou seja, se a pessoa era empregada do setor público ou privado, empregadora, trabalhadora doméstica, militar, conta própria ou tinha um trabalho não remunerado junto a outro parente. Essas informações são fornecidas pela variável `V5302`. Note que é preciso recortar a base `RENDIMENTO_TRABALHO` para que ela reporte apenas as informações referentes ao trabalho principal, através da variável `SUB_QUADRO`.
+
+```{r}
+base <- merge(x = base,
+              y = RENDIMENTO_TRABALHO[RENDIMENTO_TRABALHO$SUB_QUADRO == 1,
+                                      c("COD_UPA", "NUM_DOM", "NUM_UC", "COD_INFORMANTE", "V5302")],
+              all.x = TRUE)
+
+names(base)[length(base)] <- "PosiOcup"
+base$PosiOcup[is.na(base$PosiOcup)] <- 0
+```
+
+### Salvar
+
+Finalmente.
+
+```{r, eval=F}
+write.csv(base, "POFMadeTeste11.csv", row.names = FALSE)
+```
+
+# Exercícios
+
+**1)** De que maneira poderíamos adaptar o *ciclo* de geração de variáveis, por exemplo para o qustionário de *Despesas Coletivas*, para que o nome delas não precisasse ser estabelecido fora dele?
+
+**2)** Quando inserimos a informação sobre trabalhadoras domésticas com a variável `V1905` do questionário de despesas coletivas foi preciso criar uma nova função para ser utilizada pela `aggregate`. Substitua essa função inventada por apenas `FUN = unique`. Qual o resultado? Você consegue pensar em outra forma de fazer com que o resultado da função não seja uma lista?
+
+**3)** Note a diferença entre os `# Índices` construídos para o questionário de *Despesas coletivas* e *Outros rendimentos*. De que maneira isso altera o uso do índice dentro do ciclo?
+
+**4)** Vamos trabalhar com a conferência das rendas *monetária* e *não monetária* geradas ao longo do tutorial com aquelas reportadas pelo IBGE.
+
+a.  Como você poderia utilizar a função `all()` para identificar se os rendimentos são iguais? É preciso ajustar os valores decimais? Caso sim, utilize a função `round()` para isso.
+
+b.  Faça a divisão da soma dos rendimentos da nossa base pela soma dos rendimentos indicados na base `MORADOR`, considerando o peso de cada indivíduo.
+
+**5)** Faça agora a comparação da `RENDA_TOTAL` com os componentes dela que temos (renda monetária, não monetária e variação patrimonial). Note que ela está na base `MORADOR` ainda somada para toda a UC, sendo necessário dividí-la pela nossa variável de número de pessoas na UC. Você consegue pensar uma forma de reduzir a diferença entre elas?
+
+### Referências
